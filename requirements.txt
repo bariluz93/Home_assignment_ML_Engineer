@@ -1,0 +1,5 @@
+pytest
+seqeval
+transformers
+torch
+pandas
