@@ -17,9 +17,11 @@ src/
     preprocessing.py   # parsing DNRTI files, mapping to the common label space, validation
     evaluation.py       # strict, entity-level CoNLL-style scoring (seqeval), UNK masking
     model_adapter.py    # ModelAdapter interface + SecureBertAdapter/CyNERAdapter, latency timing
-    compare_models.py   # CLI: run both models on the same data, print comparison tables
+    compare_models.py   # CLI: run one or more models on the same data, print comparison tables
+app.py                    # Streamlit web UI: model-comparison dashboard
 scripts/
     compare_models.sh   # thin wrapper around `python src/compare_models.py`
+    run_app.sh            # thin wrapper around `streamlit run app.py`
 logs/                    # subword-disagreement warnings written here at runtime (see below)
 requirements.txt
 ```
@@ -145,7 +147,7 @@ python .\src\compare_models.py
 | Argument | Default | Description |
 | --- | --- | --- |
 | `--data` | `data/test.txt` | DNRTI-format file to evaluate on. |
-| `--max-sentences` | none (full file) | Only evaluate on the first N sentences - useful for a quick, cheap run while debugging. |
+| `--max-sentences` | none (full file) | Only evaluate on N sentences chosen at random, with a best-effort balance across entity classes (see `select_balanced_sample` in `src/model_adapter.py`) - useful for a quick, cheap run while debugging. |
 | `--log-file` | `logs/model_adapter.log` | Where subword-disagreement warnings (see above) get appended. |
 
 Example, for a quick 20-sentence smoke test:
@@ -154,7 +156,48 @@ Example, for a quick 20-sentence smoke test:
 python .\src\compare_models.py --max-sentences 20 --log-file logs\smoke.log
 ```
 
-`compare_models(data_path, max_sentences, log_file)` is also importable
-directly (e.g. from a notebook) and returns `(overall_df, per_class_df,
-latency_df)` as pandas DataFrames instead of printing them.
+`compare_models(data_path, max_sentences, log_file, models=None)` is also
+importable directly (e.g. from a notebook) and returns `(overall_df,
+per_class_df, latency_df)` as pandas DataFrames instead of printing them.
+`models` defaults to all of `MODELS`; pass a subset (e.g.
+`{"CyNER": CyNERAdapter}`) to evaluate just one model - the DataFrames come
+back the same shape either way, just with fewer rows/columns.
+
+If `data_path` doesn't exist, `compare_models.py`'s CLI (`ensure_dnrti_dataset`)
+downloads `DNRTI.rar` from its GitHub repo and extracts it into `data_path`'s
+parent directory automatically (via the system `tar` command - see caveats in
+the Web UI section below), so a fresh clone doesn't need the dataset committed.
+
+## Web UI (`app.py`)
+
+A single-page Streamlit dashboard around `compare_models()`:
+
+```
+streamlit run app.py
+```
+
+or, from `scripts/`:
+
+```
+./run_app.sh
+```
+
+Pick which model(s) to evaluate (a multiselect over `SecureBERT-NER` and
+`CyNER` - selecting just one shows that model's own metrics, it's the same
+comparison machinery run over a one-model set), the dataset path (default
+`data/test.txt`, with a **Download DNRTI dataset** button that fetches and
+extracts it if missing), `max_sentences` (0 = full dataset), and `log_file`,
+then click **Run Comparison**. A progress bar tracks each selected model's
+sentence-by-sentence progress. Results are shown as grouped bar charts
+(dataset label statistics from `compute_label_statistics`, overall
+precision/recall/F1, a per-class breakdown faceted by metric, and
+per-sentence latency) alongside the full DataFrames for exact numbers. A
+full-dataset run evaluates every selected model sequentially on CPU and can
+take several minutes.
+
+Note on RAR extraction: Python's standard library has no RAR support, so
+`ensure_dnrti_dataset` shells out to `tar`. This works out of the box on
+Windows 10+ and macOS (both ship a libarchive-based `tar` that reads RAR
+archives), but requires a libarchive-based `tar` (not plain GNU tar) on
+Linux.
 
