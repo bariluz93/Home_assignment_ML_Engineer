@@ -12,7 +12,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from tqdm import tqdm
 from transformers import pipeline
 
@@ -36,11 +36,9 @@ def _configure_file_logging(log_path: str) -> None:
 
 
 try:
-    from src.label_mapping import CYNER_TO_COMMON, SECURE_BERT_TO_COMMON
-    from src.preprocessing import preprocess_dnriti
+    from src.label_mapping import COMMON_LABELS, CYNER_TO_COMMON, SECURE_BERT_TO_COMMON
 except ImportError:  # running as a plain module from within src/ (e.g. notebooks)
-    from label_mapping import CYNER_TO_COMMON, SECURE_BERT_TO_COMMON
-    from preprocessing import preprocess_dnriti
+    from label_mapping import COMMON_LABELS, CYNER_TO_COMMON, SECURE_BERT_TO_COMMON
 
 
 def _char_spans(tokens: list[str]) -> list[tuple[int, int]]:
@@ -195,11 +193,19 @@ class CyNERAdapter(ModelAdapter):
         return self._entities_to_bio(tokens, raw_output, CYNER_TO_COMMON)
 
 
+from collections import defaultdict
+import itertools
+import random
+
+from src.label_mapping import COMMON_LABELS
+
+
+
 def run_adapter_on_dataset(
     adapter_cls: type[ModelAdapter],
     dataset: list[dict],
-    max_sentences: int | None = None,
     log_file: str | None = "logs/model_adapter.log",
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[list[str]], list[list[str]], list[float]]:
     """Run a model adapter over every sentence in a preprocessed DNRTI file.
 
@@ -207,11 +213,16 @@ def run_adapter_on_dataset(
         adapter_cls: A ModelAdapter subclass (e.g. SecureBertAdapter). It is
             instantiated here, which loads the model.
         data: A list of dictionaries, each representing a preprocessed sentence.
-        max_sentences: If set, only run on the first N sentences - useful for
-            a quick, cheap debugging run on a small slice of the data.
+        max_sentences: If set, only run on N sentences chosen at random, with
+            a best-effort balance across entity classes (see
+            select_balanced_sample) - useful for a quick, cheap debugging
+            run on a small slice of the data.
         log_file: Where to append subword-disagreement warnings (see
             ModelAdapter._entities_to_bio). Pass None to skip file logging
             and rely on the default stderr output instead.
+        on_progress: Optional callback invoked as on_progress(done, total)
+            after each sentence, in addition to the tqdm progress bar (e.g.
+            to drive a UI progress bar). Pass None (the default) to skip it.
 
     Returns:
         (labels, tokens, latencies_s):
@@ -229,13 +240,13 @@ def run_adapter_on_dataset(
         _configure_file_logging(log_file)
 
     adapter = adapter_cls()
-    if max_sentences is not None:
-        dataset = dataset[:max_sentences]
     labels, tokens, latencies = [], [], []
-    for sentence in tqdm(dataset):
+    for i, sentence in enumerate(tqdm(dataset), start=1):
         start = time.perf_counter()
         s_labels, s_tokens = adapter.predict_labels(sentence["tokens"])
         latencies.append(time.perf_counter() - start)
         labels.append(s_labels)
         tokens.append(s_tokens)
+        if on_progress:
+            on_progress(i, len(dataset))
     return labels, tokens, latencies

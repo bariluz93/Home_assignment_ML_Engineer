@@ -12,13 +12,16 @@ Produces three pandas DataFrames:
 """
 
 from __future__ import annotations
-
+import itertools
+import random
+from collections import defaultdict
 import argparse
 import statistics
 import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -26,7 +29,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.evaluation import evaluate_model
 from src.label_mapping import COMMON_LABELS
-from src.model_adapter import CyNERAdapter, ModelAdapter, SecureBertAdapter, run_adapter_on_dataset
+from src.model_adapter import (
+    CyNERAdapter,
+    ModelAdapter,
+    SecureBertAdapter,
+    run_adapter_on_dataset
+)
 from src.preprocessing import preprocess_dnriti
 
 MODELS: dict[str, type[ModelAdapter]] = {
@@ -130,19 +138,55 @@ def _build_latency_df(latencies_by_model: dict[str, list[float]]) -> pd.DataFram
         }
     return pd.DataFrame(rows).T
 
+def select_balanced_sample(dataset: list[dict], max_sentences: int) -> list[dict]:
+    """Pick `max_sentences` sentences at random, biased towards an even mix
+    of entity classes rather than dataset order.
+
+    Groups sentence indices by every canonical entity class (see
+    label_mapping.COMMON_LABELS) each sentence contains - a sentence with
+    several entity types counts toward each - shuffles each group, then
+    interleaves the groups round-robin style with itertools.zip_longest so
+    every class gets picked from evenly regardless of how many sentences it
+    has. dict.fromkeys drops duplicates (a sentence satisfying multiple
+    classes only needs picking once) while preserving that round-robin
+    order. Any slots still unfilled (fewer classes than max_sentences, or
+    sentences with no tracked entity at all) are padded with a uniform
+    random sample of whatever's left, so the result always has exactly
+    min(max_sentences, len(dataset)) sentences.
+    """
+    if max_sentences >= len(dataset):
+        return dataset
+
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i, sentence in enumerate(dataset):
+        for cls in {label[2:] for label in sentence["labels"] if label != "O"} & COMMON_LABELS:
+            groups[cls].append(i)
+    group_lists = list(groups.values())
+    for indices in group_lists:
+        random.shuffle(indices)
+    random.shuffle(group_lists)
+
+    interleaved = itertools.chain.from_iterable(itertools.zip_longest(*group_lists))
+    selected = list(dict.fromkeys(i for i in interleaved if i is not None))[:max_sentences]
+
+    return [dataset[i] for i in selected]
+
 
 def compare_models(
     data_path: str,
     max_sentences: int | None = None,
     log_file: str | None = "logs/model_adapter.log",
     models: dict[str, type[ModelAdapter]] | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict]]:
     """Evaluate one or more models in MODELS on the same slice of `data_path`.
 
     Args:
         data_path: DNRTI-format file to evaluate on.
-        max_sentences: Only evaluate on the first N sentences (see
-            run_adapter_on_dataset).
+        max_sentences: Only evaluate on N sentences chosen at random, with a
+            best-effort balance across entity classes (see
+            select_balanced_sample). Sampled once and reused for every model
+            in `models`, so they're all scored on the exact same sentences.
         log_file: Where to append subword-disagreement warnings (see
             run_adapter_on_dataset).
         models: Which models to evaluate, as a name -> ModelAdapter subclass
@@ -150,15 +194,21 @@ def compare_models(
             With a single model, the comparison collapses to just that
             model's own metrics - the DataFrames have the same shape either
             way, just with fewer rows/columns.
+        on_progress: Optional callback invoked as on_progress(model_name,
+            done, total) after each sentence of each model (e.g. to drive a
+            UI progress bar). Pass None (the default) to skip it.
 
     Returns:
-        (overall_df, per_class_df, latency_df)
+        (overall_df, per_class_df, latency_df, dataset) - `dataset` is the
+        actual (possibly max_sentences-sampled) preprocessed sentences that
+        were evaluated, e.g. to feed compute_label_statistics on the exact
+        same slice rather than re-sampling independently.
     """
     models = MODELS if models is None else models
 
     dataset = preprocess_dnriti(data_path)
     if max_sentences is not None:
-        dataset = dataset[:max_sentences]
+        dataset = select_balanced_sample(dataset, max_sentences)
     print(f"Evaluating on {len(dataset)} sentences from {data_path}")
 
     gold_labels = [sentence["labels"] for sentence in dataset]
@@ -167,11 +217,14 @@ def compare_models(
     latencies_by_model = {}
     for name, adapter_cls in models.items():
         print(f"Running {name}...")
-        predicted_labels, _, latencies = run_adapter_on_dataset(adapter_cls, dataset, log_file=log_file)
+        model_progress = (lambda done, total, name=name: on_progress(name, done, total)) if on_progress else None
+        predicted_labels, _, latencies = run_adapter_on_dataset(
+            adapter_cls, dataset, log_file=log_file, on_progress=model_progress
+        )
         results[name] = evaluate_model(gold_labels, predicted_labels)
         latencies_by_model[name] = latencies
 
-    return _build_overall_df(results), _build_per_class_df(results), _build_latency_df(latencies_by_model)
+    return _build_overall_df(results), _build_per_class_df(results), _build_latency_df(latencies_by_model), dataset
 
 
 def main() -> None:
@@ -183,14 +236,15 @@ def main() -> None:
         "--max-sentences",
         type=int,
         default=None,
-        help="Only evaluate on the first N sentences (for quick debugging runs)",
+        help="Only evaluate on N randomly-selected sentences, balanced across entity "
+        "classes where possible (for quick debugging runs)",
     )
     parser.add_argument("--log-file", default="logs/model_adapter.log")
     args = parser.parse_args()
 
     ensure_dnrti_dataset(args.data)
 
-    overall_df, per_class_df, latency_df = compare_models(args.data, args.max_sentences, args.log_file)
+    overall_df, per_class_df, latency_df, _ = compare_models(args.data, args.max_sentences, args.log_file)
 
     pd.set_option("display.width", 120)
     print("\n=== Overall comparison ===")
