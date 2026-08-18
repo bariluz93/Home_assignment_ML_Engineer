@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import statistics
+import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 import pandas as pd
@@ -35,7 +37,48 @@ MODELS: dict[str, type[ModelAdapter]] = {
 
 _AVERAGE_ROWS = {"micro avg", "macro avg", "weighted avg"}
 
+DNRTI_RAR_URL = (
+    "https://raw.githubusercontent.com/SCreaMxp/"
+    "DNRTI-A-Large-scale-Dataset-for-Named-Entity-Recognition-in-Threat-Intelligence/"
+    "master/DNRTI.rar"
+)
 
+
+def ensure_dnrti_dataset(data_path: str) -> None:
+    """Download and extract the DNRTI dataset if `data_path` doesn't exist yet.
+
+    DNRTI.rar contains train.txt/valid.txt/test.txt directly (no subfolder),
+    so extracting it into data_path's parent directory is enough to make any
+    of the three available. Extraction shells out to `tar`, since RAR is not
+    supported by Python's standard library; this works out of the box on
+    Windows 10+ and macOS (bsdtar/libarchive read RAR archives) but requires
+    a libarchive-based tar (not plain GNU tar) on Linux.
+    """
+    if Path(data_path).exists():
+        return
+
+    data_dir = Path(data_path).parent
+    data_dir.mkdir(parents=True, exist_ok=True)
+    rar_path = data_dir / "DNRTI.rar"
+
+    print(f"{data_path} not found; downloading DNRTI dataset from {DNRTI_RAR_URL}...")
+    urllib.request.urlretrieve(DNRTI_RAR_URL, rar_path)
+
+    print(f"Extracting {rar_path} into {data_dir}...")
+    try:
+        subprocess.run(["tar", "-xf", str(rar_path), "-C", str(data_dir)], check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(
+            f"Failed to extract {rar_path} with `tar`. Extract it manually into "
+            f"{data_dir} (e.g. with 7-Zip or WinRAR), or install a tar build with "
+            "RAR support (bsdtar/libarchive)."
+        ) from exc
+
+    if not Path(data_path).exists():
+        raise FileNotFoundError(
+            f"Extracted DNRTI.rar but {data_path} still doesn't exist - check "
+            "that --data matches one of train.txt/valid.txt/test.txt."
+        )
 
 
 def _extract_prf(metrics: dict) -> dict:
@@ -92,12 +135,27 @@ def compare_models(
     data_path: str,
     max_sentences: int | None = None,
     log_file: str | None = "logs/model_adapter.log",
+    models: dict[str, type[ModelAdapter]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate every model in MODELS on the same slice of `data_path`.
+    """Evaluate one or more models in MODELS on the same slice of `data_path`.
+
+    Args:
+        data_path: DNRTI-format file to evaluate on.
+        max_sentences: Only evaluate on the first N sentences (see
+            run_adapter_on_dataset).
+        log_file: Where to append subword-disagreement warnings (see
+            run_adapter_on_dataset).
+        models: Which models to evaluate, as a name -> ModelAdapter subclass
+            mapping (a subset of MODELS). Defaults to MODELS (all of them).
+            With a single model, the comparison collapses to just that
+            model's own metrics - the DataFrames have the same shape either
+            way, just with fewer rows/columns.
 
     Returns:
         (overall_df, per_class_df, latency_df)
     """
+    models = MODELS if models is None else models
+
     dataset = preprocess_dnriti(data_path)
     if max_sentences is not None:
         dataset = dataset[:max_sentences]
@@ -107,7 +165,7 @@ def compare_models(
 
     results = {}
     latencies_by_model = {}
-    for name, adapter_cls in MODELS.items():
+    for name, adapter_cls in models.items():
         print(f"Running {name}...")
         predicted_labels, _, latencies = run_adapter_on_dataset(adapter_cls, dataset, log_file=log_file)
         results[name] = evaluate_model(gold_labels, predicted_labels)
@@ -118,7 +176,9 @@ def compare_models(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", default="data/test.txt", help="DNRTI-format file to evaluate on")
+    parser.add_argument("--data", default="data/test.txt", help=f"DNRTI-format file to evaluate on.\n\
+                        defaults to data/test.txt.\n\
+                        if file doesn't exist it will be downloaded and extracted automatically from {DNRTI_RAR_URL}.")
     parser.add_argument(
         "--max-sentences",
         type=int,
@@ -127,6 +187,8 @@ def main() -> None:
     )
     parser.add_argument("--log-file", default="logs/model_adapter.log")
     args = parser.parse_args()
+
+    ensure_dnrti_dataset(args.data)
 
     overall_df, per_class_df, latency_df = compare_models(args.data, args.max_sentences, args.log_file)
 
