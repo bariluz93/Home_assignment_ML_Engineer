@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.claude
+data
+logs
+test.txt
+src/test.ipynb
+MLE Home Assignment.pdf
+Dockerfile
+.dockerignore

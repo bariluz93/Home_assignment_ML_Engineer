@@ -201,3 +201,8 @@ Windows 10+ and macOS (both ship a libarchive-based `tar` that reads RAR
 archives), but requires a libarchive-based `tar` (not plain GNU tar) on
 Linux.
 
+## Docker
+to build the docker run:
+```
+docker compose up --build
+```
