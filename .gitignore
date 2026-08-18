@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.claude/
+data/
+logs/
+test.txt
+tests/
+MLE Home Assignment.pdf
+conftest.py
