@@ -163,6 +163,8 @@ class SecureBertAdapter(ModelAdapter):
             return self.model(text)
     
     def post_process(self, tokens: list[str], raw_output: Any) -> list[str]:
+        for p in raw_output:
+            p["entity"] = p["entity"].upper()
         return self._entities_to_bio(tokens, raw_output, SECURE_BERT_TO_COMMON)
 
 
@@ -188,6 +190,8 @@ class CyNERAdapter(ModelAdapter):
             return self.model(text)
     
     def post_process(self, tokens: list[str], raw_output: Any) -> list[str]:
+        for p in raw_output:
+            p["entity"] = p["entity"].upper()
         return self._entities_to_bio(tokens, raw_output, CYNER_TO_COMMON)
 
 

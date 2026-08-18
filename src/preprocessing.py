@@ -90,6 +90,7 @@ def map_dnriti_labels(labels: list[str]) -> list[str]:
     """
     mapped = []
     for label in labels:
+        label = label.upper()
         if label == "O":
             mapped.append("O")
             continue
@@ -162,6 +163,7 @@ def preprocess_dnriti(path: str) -> list[dict]:
 
     processed = []
     for sentence in raw_sentences:
+
         mapped = map_dnriti_labels(sentence["labels"])
         processed.append(
             {

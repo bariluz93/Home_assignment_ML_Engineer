@@ -15,15 +15,15 @@ counted as "O" (true negatives).
 # "Way"/"OffAct" alongside a separate "Malware"/"Tool" row. This ambiguity is
 # intentionally not reinterpreted here.
 DNRTI_TO_COMMON: dict[str, str] = {
-    "HackOrg": "ORG", 
-    "SecTeam": "ORG",
-    "Idus": "ORG",
-    "Org": "ORG",
-    "OffAct": "SYSTEM",
-    "Way": "SYSTEM",
-    "Exp": "VULNERABILITY",
-    "Tool": "MALWARE",
-    "SamFile": "INDICATOR",
+    "HACKORG": "ORG", 
+    "SECTEAM": "ORG",
+    "IDUS": "ORG",
+    "ORG": "ORG",
+    "OFFACT": "SYSTEM",
+    "WAY": "SYSTEM",
+    "EXP": "VULNERABILITY",
+    "TOOL": "MALWARE",
+    "SAMFILE": "INDICATOR",
 }
 
 SECURE_BERT_TO_COMMON: dict[str, str] = {
@@ -40,11 +40,11 @@ SECURE_BERT_TO_COMMON: dict[str, str] = {
 }
 
 CYNER_TO_COMMON: dict[str, str] = {
-    "Organization": "ORG", 
-    "System": "SYSTEM",
-    "Vulnerability": "VULNERABILITY",
-    "Malware": "MALWARE",
-    "Indicator": "INDICATOR",
+    "ORGANIZATION": "ORG", 
+    "SYSTEM": "SYSTEM",
+    "VULNERABILITY": "VULNERABILITY",
+    "MALWARE": "MALWARE",
+    "INDICATOR": "INDICATOR",
 }
 
 # The canonical label space evaluated in the MVP benchmark.
