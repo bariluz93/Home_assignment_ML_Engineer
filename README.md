@@ -206,3 +206,6 @@ to build the docker run:
 ```
 docker compose up --build
 ```
+
+## Notes
+The file `notes_and_decisions_explanation.pdf` contains notes and explanations about some design and algorithmic choices I made in the assignment.
